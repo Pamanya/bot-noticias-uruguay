@@ -60,7 +60,6 @@ async def noticias(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         mensaje = "📰 *TOP 10 NOTICIAS DE URUGUAY*\n\n"
         
-        # Usamos pytz para mostrar la hora de Montevideo
         zona_horaria_uy = pytz.timezone('America/Montevideo')
         
         for i, noticia in enumerate(noticias[:10], 1):
@@ -73,7 +72,6 @@ async def noticias(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(mensaje, parse_mode='Markdown', disable_web_page_preview=True)
         
     except Exception as e:
-        # Importante para diagnosticar fallos en Render
         logging.exception("Error CRÍTICO al ejecutar el comando /noticias. Revisar el siguiente Traceback.")
         await update.message.reply_text("❌ Error al obtener noticias. Intenta de nuevo más tarde.")
 
@@ -133,7 +131,7 @@ async def enviar_noticias_programadas(context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='Markdown',
                     disable_web_page_preview=True
                 )
-                await asyncio.sleep(0.5)  # Evitar límite de rate (rate limit)
+                await asyncio.sleep(0.5)
             except Exception as e:
                 logging.error(f"Error al enviar mensaje a {chat_id}: {e}")
                 
@@ -148,7 +146,6 @@ def main():
     if not TOKEN:
         raise ValueError("No se encontró el TOKEN. Configura la variable de entorno TOKEN")
     
-    # 1. Definir la zona horaria para Uruguay
     zona_horaria_uy = pytz.timezone('America/Montevideo')
 
     app = ApplicationBuilder().token(TOKEN).build()
@@ -163,13 +160,12 @@ def main():
     # Tareas programadas
     job_queue = app.job_queue
     
-    # 2. Definir horas con el objeto time
     time_8am = datetime.strptime("08:00", "%H:%M").time()
     time_8pm = datetime.strptime("20:00", "%H:%M").time()
 
-    # 3. Programar las tareas usando tzinfo para la hora de Uruguay
-    job_queue.run_daily(enviar_noticias_programadas, time=time_8am, tzinfo=zona_horaria_uy)
-    job_queue.run_daily(enviar_noticias_programadas, time=time_8pm, tzinfo=zona_horaria_uy)
+    # CORRECCIÓN DE SINTAXIS: Usar 'tz' en lugar de 'tzinfo'
+    job_queue.run_daily(enviar_noticias_programadas, time=time_8am, tz=zona_horaria_uy)
+    job_queue.run_daily(enviar_noticias_programadas, time=time_8pm, tz=zona_horaria_uy)
     
     logging.info("Bot iniciado...")
     app.run_polling()
