@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime
 import json
 import os
-# Asegúrate de que 'scraper' sea accesible y tenga la función 'obtener_noticias_uruguay'
+import pytz # Importado para manejo de zona horaria
 from scraper import obtener_noticias_uruguay
 
 # Configuración de logging
@@ -33,8 +33,7 @@ def guardar_suscriptores(suscriptores):
     with open(SUSCRIPTORES_FILE, 'w') as f:
         json.dump(suscriptores, f)
 
-# --- Comandos Asíncronos ---
-
+# Comandos del bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mensaje de bienvenida"""
     mensaje = """
@@ -53,8 +52,12 @@ async def noticias(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 Buscando las últimas noticias de Uruguay...")
     
     try:
-        # La función obtener_noticias_uruguay debe ser un coroutine (async def)
         noticias = await obtener_noticias_uruguay()
+        
+        if not noticias:
+             await update.message.reply_text("⚠️ No se pudieron obtener noticias. Revisa la fuente o inténtalo más tarde.")
+             return
+
         mensaje = "📰 *TOP 10 NOTICIAS DE URUGUAY*\n\n"
         
         for i, noticia in enumerate(noticias[:10], 1):
@@ -65,8 +68,10 @@ async def noticias(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mensaje += f"_Actualizado: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
         
         await update.message.reply_text(mensaje, parse_mode='Markdown', disable_web_page_preview=True)
+        
     except Exception as e:
-        logging.error(f"Error al obtener noticias: {e}")
+        # CORRECCIÓN CLAVE: Esto registrará el traceback completo en los logs de Render
+        logging.exception("Error CRÍTICO al ejecutar el comando /noticias. Revisar el siguiente Traceback.")
         await update.message.reply_text("❌ Error al obtener noticias. Intenta de nuevo más tarde.")
 
 async def suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -102,6 +107,11 @@ async def enviar_noticias_programadas(context: ContextTypes.DEFAULT_TYPE):
     
     try:
         noticias = await obtener_noticias_uruguay()
+        
+        if not noticias:
+             logging.warning("El envío programado falló al obtener noticias. Saltando el envío.")
+             return
+             
         mensaje = "📰 *NOTICIAS DEL DÍA - URUGUAY*\n\n"
         
         for i, noticia in enumerate(noticias[:10], 1):
@@ -109,7 +119,7 @@ async def enviar_noticias_programadas(context: ContextTypes.DEFAULT_TYPE):
             mensaje += f"    📌 {noticia['fuente']}\n"
             mensaje += f"    🔗 {noticia['url']}\n\n"
         
-        mensaje += f"_Actualizado: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
+        mensaje += f"_Actualizado: {datetime.now(pytz.timezone('America/Montevideo')).strftime('%d/%m/%Y %H:%M')}_"
         
         for chat_id in suscriptores:
             try:
@@ -121,12 +131,11 @@ async def enviar_noticias_programadas(context: ContextTypes.DEFAULT_TYPE):
                 )
                 await asyncio.sleep(0.5)  # Evitar límite de rate (rate limit)
             except Exception as e:
-                # Opcional: manejar el error si un chat_id ya no es válido o ha bloqueado al bot
                 logging.error(f"Error al enviar mensaje a {chat_id}: {e}")
+                
     except Exception as e:
-        logging.error(f"Error en envío programado: {e}")
+        logging.exception("Error en envío programado.")
 
-# --- Función Principal Síncrona (Punto de Corrección) ---
 
 def main():
     """Función principal (síncrona) que inicia el bot."""
@@ -135,6 +144,9 @@ def main():
     if not TOKEN:
         raise ValueError("No se encontró el TOKEN. Configura la variable de entorno TOKEN")
     
+    # 1. Definir la zona horaria para Uruguay
+    zona_horaria_uy = pytz.timezone('America/Montevideo')
+
     app = ApplicationBuilder().token(TOKEN).build()
     
     # Comandos
@@ -144,17 +156,19 @@ def main():
     app.add_handler(CommandHandler("suscribir", suscribir))
     app.add_handler(CommandHandler("desuscribir", desuscribir))
     
-    # Tareas programadas (8:00 AM y 8:00 PM hora Uruguay GMT-3)
+    # Tareas programadas
     job_queue = app.job_queue
-    # Nota: Es recomendable especificar la zona horaria (tzinfo) si el servidor no está en GMT-3
-    job_queue.run_daily(enviar_noticias_programadas, time=datetime.strptime("08:00", "%H:%M").time())
-    job_queue.run_daily(enviar_noticias_programadas, time=datetime.strptime("20:00", "%H:%M").time())
+    
+    # 2. Definir horas con el objeto time
+    time_8am = datetime.strptime("08:00", "%H:%M").time()
+    time_8pm = datetime.strptime("20:00", "%H:%M").time()
+
+    # 3. Programar las tareas usando tzinfo para la hora de Uruguay
+    job_queue.run_daily(enviar_noticias_programadas, time=time_8am, tzinfo=zona_horaria_uy)
+    job_queue.run_daily(enviar_noticias_programadas, time=time_8pm, tzinfo=zona_horaria_uy)
     
     logging.info("Bot iniciado...")
-    
-    # CORRECCIÓN: Usamos app.run_polling() sin await y fuera de un contexto asyncio.run()
     app.run_polling()
 
 if __name__ == '__main__':
-    # CORRECCIÓN: Llamamos a la función main síncrona directamente
     main()
