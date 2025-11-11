@@ -1,4 +1,4 @@
-python-telegram-bot==20.7
+python-telegram-bot[job-queue]==20.7  <-- ¡CORRECCIÓN CLAVE!
 aiohttp==3.9.5
 beautifulsoup4==4.12.3
 requests==2.31.0
