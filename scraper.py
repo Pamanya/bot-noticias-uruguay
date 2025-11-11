@@ -2,7 +2,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 import logging
 import asyncio
-import feedparser 
+import feedparser # Sin comentarios
 import os 
 from datetime import datetime
 
@@ -26,14 +26,12 @@ RSS_FEEDS = [
 async def obtener_noticias_rss(session, feed):
     """Obtiene noticias desde un feed RSS usando feedparser con corrección de encoding"""
     try:
-        # Aumentamos el timeout a 20 segundos por seguridad
         async with session.get(feed['url'], timeout=20) as response:
             if response.status == 200:
                 
                 # CORRECCIÓN DE ENCODING: Usa el encoding reportado por el servidor, o utf-8 por defecto.
                 content = await response.text(encoding=response.charset or 'utf-8')
                 
-                # Usamos feedparser, que es más seguro para RSS
                 parsed_feed = feedparser.parse(content)
                 items = parsed_feed.entries[:3]
                 
@@ -61,7 +59,6 @@ async def obtener_noticias_rss(session, feed):
         logging.error(f"Tiempo de espera agotado al portal: {feed['nombre']}")
         return []
     except Exception as e:
-        # Captura cualquier error de parsing o inesperado.
         logging.exception(f"Error desconocido al procesar RSS de {feed['nombre']}")
         return []
 
@@ -78,7 +75,6 @@ async def obtener_noticias_uruguay():
     async with aiohttp.ClientSession(headers=headers) as session:
         tareas = [obtener_noticias_rss(session, feed) for feed in RSS_FEEDS]
         
-        # El uso de asyncio.gather es seguro porque cada función devuelve una lista vacía en caso de error
         resultados = await asyncio.gather(*tareas) 
         
         for noticias in resultados:
