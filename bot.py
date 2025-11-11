@@ -1,146 +1,101 @@
-import logging
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import asyncio
-from datetime import datetime
-import json
 import os
-from scraper import obtener_noticias_uruguay
+import asyncio
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+import aiohttp
+from bs4 import BeautifulSoup
+from datetime import datetime
 
-# Configuración de logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Token desde variable de entorno
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 
-# Archivo para guardar suscriptores
-SUSCRIPTORES_FILE = 'suscriptores.json'
+# Fuentes de noticias Uruguay
+NEWS_SOURCES = {
+    'el_pais': 'https://www.elpais.com.uy/',
+    'el_observador': 'https://www.elobservador.com.uy/',
+    'la_diaria': 'https://ladiaria.com.uy/'
+}
 
-def cargar_suscriptores():
-    """Carga la lista de suscriptores desde el archivo"""
-    if os.path.exists(SUSCRIPTORES_FILE):
-        with open(SUSCRIPTORES_FILE, 'r') as f:
-            return json.load(f)
-    return []
-
-def guardar_suscriptores(suscriptores):
-    """Guarda la lista de suscriptores en el archivo"""
-    with open(SUSCRIPTORES_FILE, 'w') as f:
-        json.dump(suscriptores, f)
-
-# Comandos del bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mensaje de bienvenida"""
-    mensaje = """
-🇺🇾 *Bot de Noticias de Uruguay* 🇺🇾
+    """Comando /start"""
+    await update.message.reply_text(
+        '¡Hola! Soy tu bot de noticias de Uruguay 🇺🇾\n\n'
+        'Comandos disponibles:\n'
+        '/noticias - Ver últimas noticias\n'
+        '/help - Ayuda'
+    )
 
-Comandos disponibles:
-/noticias - Ver las 10 noticias más destacadas
-/suscribir - Recibir noticias automáticamente (8am y 8pm)
-/desuscribir - Dejar de recibir noticias
-/help - Ver esta ayuda
-    """
-    await update.message.reply_text(mensaje, parse_mode='Markdown')
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /help"""
+    await update.message.reply_text(
+        'Comandos:\n'
+        '/start - Iniciar bot\n'
+        '/noticias - Últimas noticias de Uruguay\n'
+        '/help - Esta ayuda'
+    )
+
+async def fetch_news():
+    """Obtiene noticias de El País Uruguay"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(NEWS_SOURCES['el_pais'], timeout=10) as response:
+                if response.status == 200:
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    # Buscar títulos de noticias
+                    headlines = []
+                    # El País usa diferentes selectores, intentamos varios
+                    for selector in ['h2', 'h3', '.title', '.headline']:
+                        titles = soup.find_all(selector, limit=5)
+                        if titles:
+                            for title in titles:
+                                text = title.get_text().strip()
+                                if text and len(text) > 10:
+                                    headlines.append(text)
+                            if headlines:
+                                break
+                    
+                    return headlines[:5] if headlines else ['No se pudieron cargar noticias']
+                else:
+                    return ['Error al cargar noticias']
+    except Exception as e:
+        print(f"Error: {e}")
+        return ['Error al obtener noticias']
 
 async def noticias(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Envía las noticias actuales"""
-    await update.message.reply_text("🔍 Buscando las últimas noticias de Uruguay...")
+    """Comando /noticias"""
+    await update.message.reply_text('Cargando noticias... ⏳')
     
-    try:
-        noticias = await obtener_noticias_uruguay()
-        mensaje = "📰 *TOP 10 NOTICIAS DE URUGUAY*\n\n"
-        
-        for i, noticia in enumerate(noticias[:10], 1):
-            mensaje += f"*{i}. {noticia['titulo']}*\n"
-            mensaje += f"   📌 {noticia['fuente']}\n"
-            mensaje += f"   🔗 {noticia['url']}\n\n"
-        
-        mensaje += f"_Actualizado: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
-        
-        await update.message.reply_text(mensaje, parse_mode='Markdown', disable_web_page_preview=True)
-    except Exception as e:
-        logging.error(f"Error al obtener noticias: {e}")
-        await update.message.reply_text("❌ Error al obtener noticias. Intenta de nuevo más tarde.")
+    headlines = await fetch_news()
+    
+    message = f"📰 *Noticias de Uruguay*\n"
+    message += f"_{datetime.now().strftime('%d/%m/%Y %H:%M')}_\n\n"
+    
+    for i, headline in enumerate(headlines, 1):
+        message += f"{i}. {headline}\n\n"
+    
+    await update.message.reply_text(message, parse_mode='Markdown')
 
-async def suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Suscribe al usuario para recibir noticias automáticamente"""
-    chat_id = update.effective_chat.id
-    suscriptores = cargar_suscriptores()
-    
-    if chat_id not in suscriptores:
-        suscriptores.append(chat_id)
-        guardar_suscriptores(suscriptores)
-        await update.message.reply_text("✅ ¡Te has suscrito! Recibirás noticias a las 8:00 AM y 8:00 PM (GMT-3)")
-    else:
-        await update.message.reply_text("ℹ️ Ya estás suscrito a las noticias.")
-
-async def desuscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Desuscribe al usuario"""
-    chat_id = update.effective_chat.id
-    suscriptores = cargar_suscriptores()
-    
-    if chat_id in suscriptores:
-        suscriptores.remove(chat_id)
-        guardar_suscriptores(suscriptores)
-        await update.message.reply_text("❌ Te has desuscrito. Ya no recibirás noticias automáticas.")
-    else:
-        await update.message.reply_text("ℹ️ No estabas suscrito.")
-
-async def enviar_noticias_programadas(context: ContextTypes.DEFAULT_TYPE):
-    """Envía noticias a todos los suscriptores"""
-    suscriptores = cargar_suscriptores()
-    
-    if not suscriptores:
+async def main():
+    """Función principal"""
+    if not TELEGRAM_TOKEN:
+        print("ERROR: TELEGRAM_TOKEN no configurado")
         return
     
-    try:
-        noticias = await obtener_noticias_uruguay()
-        mensaje = "📰 *NOTICIAS DEL DÍA - URUGUAY*\n\n"
-        
-        for i, noticia in enumerate(noticias[:10], 1):
-            mensaje += f"*{i}. {noticia['titulo']}*\n"
-            mensaje += f"   📌 {noticia['fuente']}\n"
-            mensaje += f"   🔗 {noticia['url']}\n\n"
-        
-        mensaje += f"_Actualizado: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
-        
-        for chat_id in suscriptores:
-            try:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=mensaje,
-                    parse_mode='Markdown',
-                    disable_web_page_preview=True
-                )
-                await asyncio.sleep(0.5)  # Evitar límite de rate
-            except Exception as e:
-                logging.error(f"Error al enviar mensaje a {chat_id}: {e}")
-    except Exception as e:
-        logging.error(f"Error en envío programado: {e}")
-
-def main():
-    """Función principal"""
-    TOKEN = os.getenv('TOKEN')
+    print("Iniciando bot...")
     
-    if not TOKEN:
-        raise ValueError("No se encontró el TOKEN. Configura la variable de entorno TOKEN")
+    # Crear aplicación
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    app = ApplicationBuilder().token(TOKEN).build()
+    # Registrar comandos
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("noticias", noticias))
     
-    # Comandos
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", start))
-    app.add_handler(CommandHandler("noticias", noticias))
-    app.add_handler(CommandHandler("suscribir", suscribir))
-    app.add_handler(CommandHandler("desuscribir", desuscribir))
-    
-    # Tareas programadas (8:00 AM y 8:00 PM hora Uruguay GMT-3)
-    job_queue = app.job_queue
-    job_queue.run_daily(enviar_noticias_programadas, time=datetime.strptime("08:00", "%H:%M").time())
-    job_queue.run_daily(enviar_noticias_programadas, time=datetime.strptime("20:00", "%H:%M").time())
-    
-    logging.info("Bot iniciado...")
-    app.run_polling()
+    # Iniciar bot
+    print("Bot iniciado correctamente ✓")
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
