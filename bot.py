@@ -146,21 +146,15 @@ async def enviar_noticias_programadas(context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    """Función principal (síncrona) que inicia el bot."""
+    """Función principal (síncona) que inicia el bot."""
     TOKEN = os.getenv('TOKEN')
     
     if not TOKEN:
         raise ValueError("No se encontró el TOKEN. Configura la variable de entorno TOKEN")
-    
-    # Se define la zona horaria.
-    zona_horaria_uy = pytz.timezone('America/Montevideo')
 
     app = ApplicationBuilder().token(TOKEN).build()
     
     job_queue = app.job_queue
-    # PASO 1: Asignamos la zona horaria directamente al objeto job_queue
-    # CORRECCIÓN: Para PTB V20.x, se asigna 'tzinfo' al job_queue
-    job_queue.tzinfo = zona_horaria_uy
     
     # Registro de Handlers
     app.add_handler(CommandHandler("start", start))
@@ -169,14 +163,17 @@ def main():
     app.add_handler(CommandHandler("suscribir", suscribir))
     app.add_handler(CommandHandler("desuscribir", desuscribir))
     
-    # Tareas programadas
-    time_8am = datetime.strptime("08:00", "%H:%M").time()
-    time_8pm = datetime.strptime("20:00", "%H:%M").time()
+    # --- CORRECCIÓN FINAL (Conversión a UTC) ---
+    # El servidor usa UTC. Uruguay (GMT-3) está 3 horas detrás de UTC.
+    # 8:00 AM (08:00) Uruguay = 11:00 AM (11:00) UTC
+    # 8:00 PM (20:00) Uruguay = 11:00 PM (23:00) UTC
+    
+    time_8am_utc = datetime.strptime("11:00", "%H:%M").time()
+    time_8pm_utc = datetime.strptime("23:00", "%H:%M").time()
 
-    # PASO 2: run_daily SÓLO usa 'time=' (sin 'tz=' o 'tzinfo=')
-    # Esto soluciona el TypeError
-    job_queue.run_daily(enviar_noticias_programadas, time=time_8am)
-    job_queue.run_daily(enviar_noticias_programadas, time=time_8pm)
+    # Programamos las tareas usando la hora UTC, eliminando 'tz' y 'tzinfo'
+    job_queue.run_daily(enviar_noticias_programadas, time=time_8am_utc)
+    job_queue.run_daily(enviar_noticias_programadas, time=time_8pm_utc)
     
     logging.info("Bot iniciado...")
     app.run_polling()
