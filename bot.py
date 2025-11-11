@@ -18,7 +18,7 @@ logging.basicConfig(
 SUSCRIPTORES_FILE = 'suscriptores.json'
 
 def cargar_suscriptores():
-    """Carga la lista de suscriptores desde el archivo"""
+    """Carga la lista de suscriptores desde el archivo de forma segura."""
     if os.path.exists(SUSCRIPTORES_FILE):
         try:
             with open(SUSCRIPTORES_FILE, 'r') as f:
@@ -29,11 +29,16 @@ def cargar_suscriptores():
     return []
 
 def guardar_suscriptores(suscriptores):
-    """Guarda la lista de suscriptores en el archivo"""
-    with open(SUSCRIPTORES_FILE, 'w') as f:
-        json.dump(suscriptores, f)
+    """Guarda la lista de suscriptores en el archivo."""
+    # Usamos try/except por si hay problemas de permisos en el entorno de Render
+    try:
+        with open(SUSCRIPTORES_FILE, 'w') as f:
+            json.dump(suscriptores, f)
+    except IOError as e:
+        logging.error(f"Error al guardar suscriptores: {e}")
 
-# Comandos del bot
+# --- Comandos del bot ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mensaje de bienvenida"""
     mensaje = """
@@ -41,28 +46,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Comandos disponibles:
 /noticias - Ver las 10 noticias más destacadas
-/suscribir - Recibir noticias automáticamente (8am y 8pm)
+/suscribir - Recibir noticias automáticamente (8am y 8pm, hora de UY)
 /desuscribir - Dejar de recibir noticias
 /help - Ver esta ayuda
     """
     await update.message.reply_text(mensaje, parse_mode='Markdown')
 
 async def noticias(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Envía las noticias actuales"""
+    """Envía las noticias actuales, con registro de errores detallado."""
     await update.message.reply_text("🔍 Buscando las últimas noticias de Uruguay...")
     
     try:
-        noticias = await obtener_noticias_uruguay()
+        noticias_list = await obtener_noticias_uruguay()
         
-        if not noticias:
-             await update.message.reply_text("⚠️ No se pudieron obtener noticias de las fuentes. Revisa el log de errores.")
+        if not noticias_list:
+             await update.message.reply_text("⚠️ No se pudieron obtener noticias. Las fuentes no están disponibles o fallaron.")
              return
 
         mensaje = "📰 *TOP 10 NOTICIAS DE URUGUAY*\n\n"
         
         zona_horaria_uy = pytz.timezone('America/Montevideo')
         
-        for i, noticia in enumerate(noticias[:10], 1):
+        for i, noticia in enumerate(noticias_list[:10], 1):
             mensaje += f"*{i}. {noticia['titulo']}*\n"
             mensaje += f"    📌 {noticia['fuente']}\n"
             mensaje += f"    🔗 {noticia['url']}\n\n"
@@ -72,11 +77,12 @@ async def noticias(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(mensaje, parse_mode='Markdown', disable_web_page_preview=True)
         
     except Exception as e:
-        logging.exception("Error CRÍTICO al ejecutar el comando /noticias. Revisar el siguiente Traceback.")
+        # logging.exception registra el Traceback completo para un diagnóstico fácil en Render
+        logging.exception("Error CRÍTICO al ejecutar el comando /noticias.")
         await update.message.reply_text("❌ Error al obtener noticias. Intenta de nuevo más tarde.")
 
 async def suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Suscribe al usuario para recibir noticias automáticamente"""
+    """Suscribe al usuario."""
     chat_id = update.effective_chat.id
     suscriptores = cargar_suscriptores()
     
@@ -88,7 +94,7 @@ async def suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ Ya estás suscrito a las noticias.")
 
 async def desuscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Desuscribe al usuario"""
+    """Desuscribe al usuario."""
     chat_id = update.effective_chat.id
     suscriptores = cargar_suscriptores()
     
@@ -100,23 +106,23 @@ async def desuscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ No estabas suscrito.")
 
 async def enviar_noticias_programadas(context: ContextTypes.DEFAULT_TYPE):
-    """Envía noticias a todos los suscriptores"""
+    """Envía noticias a todos los suscriptores."""
     suscriptores = cargar_suscriptores()
     
     if not suscriptores:
         return
     
     try:
-        noticias = await obtener_noticias_uruguay()
+        noticias_list = await obtener_noticias_uruguay()
         
-        if not noticias:
+        if not noticias_list:
              logging.warning("El envío programado falló al obtener noticias. Saltando el envío.")
              return
              
         mensaje = "📰 *NOTICIAS DEL DÍA - URUGUAY*\n\n"
         zona_horaria_uy = pytz.timezone('America/Montevideo')
         
-        for i, noticia in enumerate(noticias[:10], 1):
+        for i, noticia in enumerate(noticias_list[:10], 1):
             mensaje += f"*{i}. {noticia['titulo']}*\n"
             mensaje += f"    📌 {noticia['fuente']}\n"
             mensaje += f"    🔗 {noticia['url']}\n\n"
@@ -146,11 +152,12 @@ def main():
     if not TOKEN:
         raise ValueError("No se encontró el TOKEN. Configura la variable de entorno TOKEN")
     
+    # Se define la zona horaria para el JobQueue
     zona_horaria_uy = pytz.timezone('America/Montevideo')
 
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Comandos
+    # Registro de Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
     app.add_handler(CommandHandler("noticias", noticias))
@@ -163,7 +170,7 @@ def main():
     time_8am = datetime.strptime("08:00", "%H:%M").time()
     time_8pm = datetime.strptime("20:00", "%H:%M").time()
 
-    # CORRECCIÓN DE SINTAXIS: Usar 'tz' en lugar de 'tzinfo'
+    # CORRECCIÓN FINAL: Usar 'tz' en lugar de 'tzinfo'
     job_queue.run_daily(enviar_noticias_programadas, time=time_8am, tz=zona_horaria_uy)
     job_queue.run_daily(enviar_noticias_programadas, time=time_8pm, tz=zona_horaria_uy)
     
