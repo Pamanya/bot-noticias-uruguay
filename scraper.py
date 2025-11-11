@@ -2,6 +2,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 import logging
 from datetime import datetime
+import asyncio
 
 # Portales de noticias de Uruguay
 PORTALES = [
@@ -50,7 +51,7 @@ async def obtener_noticias_rss(session, feed):
         async with session.get(feed['url'], timeout=10) as response:
             if response.status == 200:
                 content = await response.text()
-                soup = BeautifulSoup(content, 'xml')
+                soup = BeautifulSoup(content, 'html.parser')
                 items = soup.find_all('item')[:3]  # Top 3 de cada fuente
                 
                 noticias = []
@@ -92,5 +93,3 @@ async def obtener_noticias_uruguay():
         ]
     
     return todas_noticias[:10]
-
-import asyncio
