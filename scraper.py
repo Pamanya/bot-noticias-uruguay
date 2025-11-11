@@ -4,6 +4,7 @@ import asyncio
 import feedparser 
 import os 
 from datetime import datetime
+from bs4 import BeautifulSoup
 
 # Configuración de logging para scraper
 logging.basicConfig(
@@ -11,17 +12,22 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# --- LISTA AMPLIADA DE URLs RSS (Más de 20) ---
-# Se agregan más portales nacionales, departamentales y radios.
+# --- 1. FUENTES QUE USAN WEB SCRAPING DIRECTO (Los Conflictivos) ---
+# Usamos esta lista para los portales que bloquean el RSS (El País) o tienen feeds inconsistentes.
+HTML_FEEDS = [
+    # {'nombre': 'El País', 'url': 'https://www.elpais.com.uy/', 'selector': 'h3.news-title a'}, # El País está bloqueando con 403. Mantener por si se habilita
+    {'nombre': 'El Observador', 'url': 'https://www.elobservador.com.uy/', 'selector': 'h2 a'},
+    {'nombre': 'Montevideo Portal', 'url': 'https://www.montevideo.com.uy/', 'selector': 'div.news-main-box h3 a'},
+    {'nombre': 'Subrayado', 'url': 'https://www.subrayado.com.uy/', 'selector': 'a.post-link'},
+]
+
+
+# --- 2. FUENTES QUE USAN RSS (Más de 20 en total) ---
+# Usamos esta lista para portales que tienen feeds RSS funcionales.
 RSS_FEEDS = [
-    # --- Portales Principales ---
-    {'nombre': 'El Observador', 'url': 'https://www.elobservador.com.uy/rss/home.xml'},
     {'nombre': 'La Diaria', 'url': 'https://ladiaria.com.uy/feed/'},
-    {'nombre': 'Montevideo Portal', 'url': 'https://www.montevideo.com.uy/rss/index.xml'},
-    {'nombre': 'Subrayado', 'url': 'https://www.subrayado.com.uy/rss'},
     {'nombre': 'La Red 21', 'url': 'https://www.lr21.com.uy/feed'},
     {'nombre': 'República', 'url': 'https://www.republica.com.uy/feed/'},
-    {'nombre': 'El País', 'url': 'https://www.elpais.com.uy/rss/'}, # Habilitado para re-intentar (puede fallar con 403)
     
     # --- Canales de TV ---
     {'nombre': 'Canal 10', 'url': 'https://www.canal10.com.uy/rss'},
@@ -45,23 +51,22 @@ RSS_FEEDS = [
     {'nombre': 'Diario El Pueblo (Salto)', 'url': 'https://diarioelpueblo.com.uy/feed/'},
 ]
 
+# Cabeceras (headers) que simulan ser un navegador web real
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.88 Safari/537.36'
+}
+
+# --- FUNCIONES DE OBTENCIÓN DE NOTICIAS ---
+
 async def obtener_noticias_rss(session, feed):
-    """
-    Obtiene noticias desde un feed RSS de forma segura.
-    Lee bytes crudos y deja que feedparser maneje el encoding.
-    """
+    """Obtiene noticias de un feed RSS de forma segura, leyendo bytes crudos."""
     try:
         async with session.get(feed['url'], timeout=20) as response:
             if response.status == 200:
-                
-                # --- CORRECCIÓN DE ENCODING (Montevideo Portal, etc.) ---
-                # Leemos bytes crudos (response.read) en lugar de texto (response.text)
-                # Esto permite a feedparser detectar el encoding (ej: latin-1)
+                # Leemos bytes crudos para evitar errores de codificación
                 content_bytes = await response.read()
                 
-                # feedparser analizará los bytes
                 parsed_feed = feedparser.parse(content_bytes)
-                # Reducimos a 2 noticias por fuente para más variedad en el TOP 10
                 items = parsed_feed.entries[:2] 
                 
                 noticias = []
@@ -78,34 +83,72 @@ async def obtener_noticias_rss(session, feed):
                 
                 return noticias
             else:
-                 # Errores 403 (Prohibido) o 404 (No Encontrado) se registran aquí
                  logging.error(f"Error HTTP {response.status} al obtener RSS de {feed['nombre']}")
                  return []
                  
-    except aiohttp.ClientConnectorError:
-        logging.error(f"Error de conexión (DNS o SSL) al portal: {feed['nombre']}")
-        return []
-    except asyncio.TimeoutError:
-        logging.error(f"Tiempo de espera agotado (20s) al portal: {feed['nombre']}")
-        return []
     except Exception as e:
-        # Captura cualquier error de parsing o inesperado.
-        logging.exception(f"Error desconocido al procesar RSS de {feed['nombre']}")
+        logging.error(f"Error al procesar RSS de {feed['nombre']}: {e}")
+        return []
+
+async def obtener_noticias_html(session, feed):
+    """Realiza Web Scraping directo de la página HTML."""
+    try:
+        # Usamos las cabeceras de navegador para evitar bloqueos 403
+        async with session.get(feed['url'], timeout=20, headers=HEADERS) as response:
+            if response.status == 200:
+                html_content = await response.text()
+                soup = BeautifulSoup(html_content, 'lxml')
+                
+                # Buscamos todos los elementos que coincidan con el selector CSS (por ej: 'h3.news-title a')
+                enlaces_encontrados = soup.select(feed['selector'])
+                
+                noticias = []
+                # Limitamos a un máximo de 3 noticias por fuente
+                for enlace in enlaces_encontrados[:3]: 
+                    titulo = enlace.get_text().strip()
+                    link = enlace.get('href')
+                    
+                    # Garantizamos que el enlace sea absoluto si es relativo
+                    if link and not link.startswith('http'):
+                        link = feed['url'].rstrip('/') + link
+                    
+                    if titulo and link:
+                        noticias.append({
+                            'titulo': titulo,
+                            'url': link,
+                            'fuente': feed['nombre']
+                        })
+                        
+                return noticias
+            else:
+                 logging.error(f"Error HTTP {response.status} al obtener HTML de {feed['nombre']}")
+                 return []
+                 
+    except Exception as e:
+        logging.error(f"Error al procesar HTML de {feed['nombre']}: {e}")
         return []
 
 async def obtener_noticias_uruguay():
-    """Coordina la obtención asíncrona de noticias de todos los portales."""
+    """Coordina la obtención asíncrona de noticias de TODOS los portales (RSS y HTML)."""
     todas_noticias = []
     
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-
-    async with aiohttp.ClientSession(headers=headers) as session:
-        tareas = [obtener_noticias_rss(session, feed) for feed in RSS_FEEDS]
-        resultados = await asyncio.gather(*tareas) 
+    # --- 1. TAREAS DE SCRAPING HTML ---
+    # Usamos headers=HEADERS en ClientSession para las solicitudes HTML
+    async with aiohttp.ClientSession() as session:
+        # Nota: La función obtener_noticias_html ya usa HEADERS en su llamada a session.get.
+        tareas_html = [obtener_noticias_html(session, feed) for feed in HTML_FEEDS]
+        resultados_html = await asyncio.gather(*tareas_html) 
         
-        for noticias in resultados:
+        for noticias in resultados_html:
+            if noticias is not None:
+                todas_noticias.extend(noticias)
+
+    # --- 2. TAREAS DE SCRAPING RSS ---
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
+        tareas_rss = [obtener_noticias_rss(session, feed) for feed in RSS_FEEDS]
+        resultados_rss = await asyncio.gather(*tareas_rss) 
+        
+        for noticias in resultados_rss:
             if noticias is not None:
                 todas_noticias.extend(noticias)
     
@@ -113,5 +156,5 @@ async def obtener_noticias_uruguay():
          logging.warning("La función obtener_noticias_uruguay no pudo consolidar ninguna noticia.")
          return []
     
-    # El bot sigue devolviendo el TOP 10, pero ahora de un pool mucho más grande.
+    # Devolvemos el TOP 10 de la gran lista consolidada
     return todas_noticias[:10]
