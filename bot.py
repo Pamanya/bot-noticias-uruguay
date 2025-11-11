@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime
 import json
 import os
-import pytz # Importado para manejo de zona horaria
+import pytz
 from scraper import obtener_noticias_uruguay
 
 # Configuración de logging
@@ -55,22 +55,25 @@ async def noticias(update: Update, context: ContextTypes.DEFAULT_TYPE):
         noticias = await obtener_noticias_uruguay()
         
         if not noticias:
-             await update.message.reply_text("⚠️ No se pudieron obtener noticias. Revisa la fuente o inténtalo más tarde.")
+             await update.message.reply_text("⚠️ No se pudieron obtener noticias de las fuentes. Revisa el log de errores.")
              return
 
         mensaje = "📰 *TOP 10 NOTICIAS DE URUGUAY*\n\n"
+        
+        # Usamos pytz para mostrar la hora de Montevideo
+        zona_horaria_uy = pytz.timezone('America/Montevideo')
         
         for i, noticia in enumerate(noticias[:10], 1):
             mensaje += f"*{i}. {noticia['titulo']}*\n"
             mensaje += f"    📌 {noticia['fuente']}\n"
             mensaje += f"    🔗 {noticia['url']}\n\n"
         
-        mensaje += f"_Actualizado: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
+        mensaje += f"_Actualizado: {datetime.now(zona_horaria_uy).strftime('%d/%m/%Y %H:%M')}_"
         
         await update.message.reply_text(mensaje, parse_mode='Markdown', disable_web_page_preview=True)
         
     except Exception as e:
-        # CORRECCIÓN CLAVE: Esto registrará el traceback completo en los logs de Render
+        # Importante para diagnosticar fallos en Render
         logging.exception("Error CRÍTICO al ejecutar el comando /noticias. Revisar el siguiente Traceback.")
         await update.message.reply_text("❌ Error al obtener noticias. Intenta de nuevo más tarde.")
 
@@ -113,13 +116,14 @@ async def enviar_noticias_programadas(context: ContextTypes.DEFAULT_TYPE):
              return
              
         mensaje = "📰 *NOTICIAS DEL DÍA - URUGUAY*\n\n"
+        zona_horaria_uy = pytz.timezone('America/Montevideo')
         
         for i, noticia in enumerate(noticias[:10], 1):
             mensaje += f"*{i}. {noticia['titulo']}*\n"
             mensaje += f"    📌 {noticia['fuente']}\n"
             mensaje += f"    🔗 {noticia['url']}\n\n"
         
-        mensaje += f"_Actualizado: {datetime.now(pytz.timezone('America/Montevideo')).strftime('%d/%m/%Y %H:%M')}_"
+        mensaje += f"_Actualizado: {datetime.now(zona_horaria_uy).strftime('%d/%m/%Y %H:%M')}_"
         
         for chat_id in suscriptores:
             try:
