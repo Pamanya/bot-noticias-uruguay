@@ -155,11 +155,11 @@ def main():
     # Se define la zona horaria.
     zona_horaria_uy = pytz.timezone('America/Montevideo')
 
-    # CORRECCIÓN CLAVE: En versiones PTB V20.x, la zona horaria se asigna al JobQueue, no a ApplicationBuilder.
     app = ApplicationBuilder().token(TOKEN).build()
     
     job_queue = app.job_queue
-    # Asignamos la zona horaria directamente al objeto job_queue
+    # PASO 1: Asignamos la zona horaria directamente al objeto job_queue
+    # CORRECCIÓN: Para PTB V20.x, se asigna 'tzinfo' al job_queue
     job_queue.tzinfo = zona_horaria_uy
     
     # Registro de Handlers
@@ -173,7 +173,8 @@ def main():
     time_8am = datetime.strptime("08:00", "%H:%M").time()
     time_8pm = datetime.strptime("20:00", "%H:%M").time()
 
-    # IMPORTANTE: run_daily ya no necesita el argumento tz= o tzinfo= porque job_queue.tzinfo ya está configurado.
+    # PASO 2: run_daily SÓLO usa 'time=' (sin 'tz=' o 'tzinfo=')
+    # Esto soluciona el TypeError
     job_queue.run_daily(enviar_noticias_programadas, time=time_8am)
     job_queue.run_daily(enviar_noticias_programadas, time=time_8pm)
     
