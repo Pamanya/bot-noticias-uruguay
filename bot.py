@@ -152,10 +152,15 @@ def main():
     if not TOKEN:
         raise ValueError("No se encontró el TOKEN. Configura la variable de entorno TOKEN")
     
-    # Se define la zona horaria para el JobQueue
+    # Se define la zona horaria.
     zona_horaria_uy = pytz.timezone('America/Montevideo')
 
+    # CORRECCIÓN CLAVE: En versiones PTB V20.x, la zona horaria se asigna al JobQueue, no a ApplicationBuilder.
     app = ApplicationBuilder().token(TOKEN).build()
+    
+    job_queue = app.job_queue
+    # Asignamos la zona horaria directamente al objeto job_queue
+    job_queue.tzinfo = zona_horaria_uy
     
     # Registro de Handlers
     app.add_handler(CommandHandler("start", start))
@@ -165,14 +170,12 @@ def main():
     app.add_handler(CommandHandler("desuscribir", desuscribir))
     
     # Tareas programadas
-    job_queue = app.job_queue
-    
     time_8am = datetime.strptime("08:00", "%H:%M").time()
     time_8pm = datetime.strptime("20:00", "%H:%M").time()
 
-    # CORRECCIÓN FINAL: Usar 'tz' en lugar de 'tzinfo'
-    job_queue.run_daily(enviar_noticias_programadas, time=time_8am, tz=zona_horaria_uy)
-    job_queue.run_daily(enviar_noticias_programadas, time=time_8pm, tz=zona_horaria_uy)
+    # IMPORTANTE: run_daily ya no necesita el argumento tz= o tzinfo= porque job_queue.tzinfo ya está configurado.
+    job_queue.run_daily(enviar_noticias_programadas, time=time_8am)
+    job_queue.run_daily(enviar_noticias_programadas, time=time_8pm)
     
     logging.info("Bot iniciado...")
     app.run_polling()
