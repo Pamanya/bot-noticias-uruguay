@@ -5,6 +5,7 @@ import feedparser
 import os 
 from datetime import datetime
 from bs4 import BeautifulSoup
+import re # Necesario para la sanitización
 
 # Configuración de logging para scraper
 logging.basicConfig(
@@ -12,10 +13,20 @@ logging.basicConfig(
     level=logging.INFO
 )
 
+# Caracteres especiales de Markdown que DEBEN ser escapados
+# Los escapamos para evitar el error telegram.error.BadRequest
+MARKDOWN_SPECIAL_CHARS = r"([_*\[\]()~`>#+\-=|{}.!])"
+
+def sanitize_markdown_v2(text):
+    """Escapa los caracteres especiales de Markdown en el texto para que Telegram no falle."""
+    # Reemplazamos los caracteres especiales con una barra invertida para escaparlos
+    return re.sub(MARKDOWN_SPECIAL_CHARS, r'\\\1', text)
+
 # --- 1. FUENTES QUE USAN WEB SCRAPING DIRECTO (Los Conflictivos) ---
 # Usamos esta lista para los portales que bloquean el RSS (El País) o tienen feeds inconsistentes.
 HTML_FEEDS = [
-    # {'nombre': 'El País', 'url': 'https://www.elpais.com.uy/', 'selector': 'h3.news-title a'}, # El País está bloqueando con 403. Mantener por si se habilita
+    # El País está bloqueando con 403. Mantener por si se habilita
+    # {'nombre': 'El País', 'url': 'https://www.elpais.com.uy/', 'selector': 'h3.news-title a'}, 
     {'nombre': 'El Observador', 'url': 'https://www.elobservador.com.uy/', 'selector': 'h2 a'},
     {'nombre': 'Montevideo Portal', 'url': 'https://www.montevideo.com.uy/', 'selector': 'div.news-main-box h3 a'},
     {'nombre': 'Subrayado', 'url': 'https://www.subrayado.com.uy/', 'selector': 'a.post-link'},
@@ -23,32 +34,25 @@ HTML_FEEDS = [
 
 
 # --- 2. FUENTES QUE USAN RSS (Más de 20 en total) ---
-# Usamos esta lista para portales que tienen feeds RSS funcionales.
+# Hemos ELIMINADO los feeds 404 (Telenoche, La Diaria, etc.) y los SSL (Agencia Foco)
 RSS_FEEDS = [
-    {'nombre': 'La Diaria', 'url': 'https://ladiaria.com.uy/feed/'},
+    # Portales Generales
     {'nombre': 'La Red 21', 'url': 'https://www.lr21.com.uy/feed'},
-    {'nombre': 'República', 'url': 'https://www.republica.com.uy/feed/'},
     
-    # --- Canales de TV ---
+    # Canales de TV (Solo dejamos los que parecen funcionar)
     {'nombre': 'Canal 10', 'url': 'https://www.canal10.com.uy/rss'},
-    {'nombre': 'Teledoce (Telemundo)', 'url': 'https://www.teledoce.com/feed/'},
-    {'nombre': 'Telenoche', 'url': 'https://www.telenoche.com.uy/rss'},
+    # Teledoce / Telemundo parece ser funcional
+    {'nombre': 'Teledoce (Telemundo)', 'url': 'https://www.teledoce.com/feed/'}, 
 
-    # --- Radios ---
-    {'nombre': 'El Espectador', 'url': 'https://www.elespectador.com/rss'},
+    # Radios 
     {'nombre': '970 Universal', 'url': 'https://www.970universal.com/feed/'},
-    {'nombre': 'Radio Monte Carlo', 'url': 'https://www.radiomontecarlo.com.uy/feed/'},
     
-    # --- Otros Portales y Departamentales ---
-    {'nombre': 'Agencia Foco', 'url': 'https://www.foco.uy/feed/'},
+    # Otros Portales y Departamentales
     {'nombre': 'Crónicas', 'url': 'https://www.cronicas.com.uy/feed/'},
     {'nombre': 'Ecos', 'url': 'https://ecos.la/feed/'},
     {'nombre': 'La Mañana', 'url': 'https://www.lamañana.uy/feed/'},
     {'nombre': 'El Popular', 'url': 'https://www.elpopular.uy/feed/'},
-    {'nombre': 'Agesor (Soriano)', 'url': 'https://www.agesor.com.uy/rss.php'},
-    {'nombre': 'Durazno Digital', 'url': 'https://www.duraznodigital.uy/feed/'},
     {'nombre': 'Carmelo Portal', 'url': 'https://www.carmeloportal.com/feed/'},
-    {'nombre': 'Diario El Pueblo (Salto)', 'url': 'https://diarioelpueblo.com.uy/feed/'},
 ]
 
 # Cabeceras (headers) que simulan ser un navegador web real
@@ -75,8 +79,9 @@ async def obtener_noticias_rss(session, feed):
                     link = entry.get('link')
                     
                     if titulo and link:
+                        # !!! APLICAR SANITIZACIÓN !!!
                         noticias.append({
-                            'titulo': titulo.strip(),
+                            'titulo': sanitize_markdown_v2(titulo).strip(),
                             'url': link.strip(),
                             'fuente': feed['nombre']
                         })
@@ -113,8 +118,9 @@ async def obtener_noticias_html(session, feed):
                         link = feed['url'].rstrip('/') + link
                     
                     if titulo and link:
+                        # !!! APLICAR SANITIZACIÓN !!!
                         noticias.append({
-                            'titulo': titulo,
+                            'titulo': sanitize_markdown_v2(titulo),
                             'url': link,
                             'fuente': feed['nombre']
                         })
