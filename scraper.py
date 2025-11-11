@@ -1,106 +1,97 @@
-import os
-import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
 import aiohttp
 from bs4 import BeautifulSoup
+import logging
 from datetime import datetime
+import asyncio # <-- CORRECCIÓN: Aseguramos que asyncio se importe al inicio
 
-# Configurar logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+# Portales de noticias de Uruguay (Usados en el pasado para scraping, mantenidos como referencia)
+PORTALES = [
+    {
+        'nombre': 'El País',
+        'url': 'https://www.elpais.com.uy/',
+        'selector': 'article h2 a, .article-title a'
+    },
+    {
+        'nombre': 'El Observador',
+        'url': 'https://www.elobservador.com.uy/',
+        'selector': 'article h2 a, .headline a'
+    },
+    {
+        'nombre': 'La Diaria',
+        'url': 'https://ladiaria.com.uy/',
+        'selector': 'article h2 a, .article-title a'
+    },
+    {
+        'nombre': 'Montevideo Portal',
+        'url': 'https://www.montevideo.com.uy/',
+        'selector': 'article h2 a, .title a'
+    },
+    {
+        'nombre': 'Subrayado',
+        'url': 'https://www.subrayado.com.uy/',
+        'selector': 'article h2 a, .nota-title a'
+    },
+]
 
-# Token desde variable de entorno
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+# RSS Feeds (usados actualmente para obtener noticias)
+RSS_FEEDS = [
+    {'nombre': 'El País', 'url': 'https://www.elpais.com.uy/rss/'},
+    {'nombre': 'El Observador', 'url': 'https://www.elobservador.com.uy/rss/homepage.xml'},
+    {'nombre': 'La Diaria', 'url': 'https://ladiaria.com.uy/feed/'},
+    {'nombre': 'Montevideo Portal', 'url': 'https://www.montevideo.com.uy/rss/index.xml'},
+    {'nombre': 'Subrayado', 'url': 'https://www.subrayado.com.uy/rss/'},
+    {'nombre': 'La Red 21', 'url': 'https://www.lr21.com.uy/feed'},
+    {'nombre': 'República', 'url': 'https://www.republica.com.uy/feed'},
+    {'nombre': 'Búsqueda', 'url': 'https://www.busqueda.com.uy/rss'},
+]
 
-# Fuentes de noticias Uruguay
-NEWS_SOURCES = {
-    'el_pais': 'https://www.elpais.com.uy/',
-    'el_observador': 'https://www.elobservador.com.uy/',
-    'la_diaria': 'https://ladiaria.com.uy/'
-}
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /start"""
-    await update.message.reply_text(
-        '¡Hola! Soy tu bot de noticias de Uruguay 🇺🇾\n\n'
-        'Comandos disponibles:\n'
-        '/noticias - Ver últimas noticias\n'
-        '/help - Ayuda'
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /help"""
-    await update.message.reply_text(
-        'Comandos:\n'
-        '/start - Iniciar bot\n'
-        '/noticias - Últimas noticias de Uruguay\n'
-        '/help - Esta ayuda'
-    )
-
-async def fetch_news():
-    """Obtiene noticias de El País Uruguay"""
+async def obtener_noticias_rss(session, feed):
+    """Obtiene noticias desde un feed RSS"""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(NEWS_SOURCES['el_pais'], timeout=10) as response:
-                if response.status == 200:
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
+        async with session.get(feed['url'], timeout=10) as response:
+            if response.status == 200:
+                content = await response.text()
+                soup = BeautifulSoup(content, 'xml')
+                items = soup.find_all('item')[:3]  # Top 3 de cada fuente
+                
+                noticias = []
+                for item in items:
+                    titulo = item.find('title')
+                    link = item.find('link')
                     
-                    headlines = []
-                    for selector in ['h2', 'h3', '.title', '.headline']:
-                        titles = soup.find_all(selector, limit=5)
-                        if titles:
-                            for title in titles:
-                                text = title.get_text().strip()
-                                if text and len(text) > 10:
-                                    headlines.append(text)
-                            if headlines:
-                                break
-                    
-                    return headlines[:5] if headlines else ['No se pudieron cargar noticias']
-                else:
-                    return ['Error al cargar noticias']
+                    if titulo and link:
+                        noticias.append({
+                            'titulo': titulo.text.strip(),
+                            'url': link.text.strip(),
+                            'fuente': feed['nombre']
+                        })
+                
+                return noticias
     except Exception as e:
-        logger.error(f"Error: {e}")
-        return ['Error al obtener noticias']
+        logging.error(f"Error al obtener RSS de {feed['nombre']}: {e}")
+        return []
 
-async def noticias(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /noticias"""
-    await update.message.reply_text('Cargando noticias... ⏳')
+async def obtener_noticias_uruguay():
+    """Obtiene noticias de todos los portales uruguayos (función requerida por bot.py)"""
+    todas_noticias = []
     
-    headlines = await fetch_news()
+    async with aiohttp.ClientSession() as session:
+        tareas = [obtener_noticias_rss(session, feed) for feed in RSS_FEEDS]
+        # Espera que todas las tareas asíncronas se completen
+        resultados = await asyncio.gather(*tareas) 
+        
+        for noticias in resultados:
+            todas_noticias.extend(noticias)
     
-    message = f"📰 *Noticias de Uruguay*\n"
-    message += f"_{datetime.now().strftime('%d/%m/%Y %H:%M')}_\n\n"
+    # Si no hay noticias, devolver algunas de ejemplo
+    if not todas_noticias:
+        todas_noticias = [
+            {
+                'titulo': 'No se pudieron obtener noticias en este momento',
+                'url': 'https://www.google.com/search?q=noticias+uruguay',
+                'fuente': 'Sistema'
+            }
+        ]
     
-    for i, headline in enumerate(headlines, 1):
-        message += f"{i}. {headline}\n\n"
-    
-    await update.message.reply_text(message, parse_mode='Markdown')
-
-def main():
-    """Función principal"""
-    if not TELEGRAM_TOKEN:
-        logger.error("ERROR: TELEGRAM_TOKEN no configurado")
-        return
-    
-    logger.info("Iniciando bot...")
-    
-    # Crear aplicación
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    # Registrar comandos
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("noticias", noticias))
-    
-    # Iniciar bot
-    logger.info("Bot iniciado correctamente ✓")
-    application.run_polling(drop_pending_updates=True)
-
-if __name__ == '__main__':
-    main()
+    # Devuelve el top 10 de todas las noticias combinadas
+    return todas_noticias[:10]
